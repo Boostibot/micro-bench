@@ -15,7 +15,7 @@ namespace microbench
     nodisc 
     int64_t clock() noexcept {
         auto duration = std::chrono::high_resolution_clock::now().time_since_epoch();
-        return duration_cast<std::chrono::nanoseconds>(duration).count(); 
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count(); 
     }
 
     //Ellapsed time in nanoseconds
@@ -79,7 +79,7 @@ namespace microbench
     namespace time_consts
     {
         static const Clock_Stats CLOCK_STATS = calculate_clock_stats();
-        static const     int64_t CLOCK_ACCURACY = CLOCK_STATS.median;
+        static const     int64_t CLOCK_ACCURACY = CLOCK_STATS.median != 0 ? CLOCK_STATS.median : CLOCK_STATS.average;
 
         static constexpr int64_t SECOND_MILISECONDS  = 1'000;
         static constexpr int64_t SECOND_MIRCOSECONDS = 1'000'000;
@@ -258,7 +258,7 @@ namespace microbench
         // clock runtime and 2*clock runtime depending from which point in the clock
         // function is where the 'clock' actually 'starts'. We assume the maximum runtime
         // but the choice is arbitrary
-        int64_t CLOCK_RUNTIME = CLOCK_ACCURACY / 2;
+        int64_t CLOCK_RUNTIME = CLOCK_ACCURACY;
 
         //However since we substract it from min, max and mean the statics still remain valid
         // only shifted (more or less corrected)
@@ -295,7 +295,7 @@ namespace microbench
                 break;
         }
 
-        assert(mean_ms > 0 && min_ms > 0 && max_ms > 0);
+        assert(mean_ms >= 0 && min_ms >= 0 && max_ms >= 0);
 
         //We assume that summing all running times in a batch 
         // (and then dividing by its size = making an average)

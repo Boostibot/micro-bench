@@ -281,7 +281,6 @@ namespace microbench
                 mean_ms = cast(double) adjusted_time_sum / cast(double) (iters * MILISECOND_NANOSECONDS);
                 min_ms = cast(double) adjutsted_min / cast(double) (batch_size * MILISECOND_NANOSECONDS);
                 max_ms = cast(double) adjutsted_max / cast(double) (batch_size * MILISECOND_NANOSECONDS);
-                printf("%lf\n", min_ms);
             }
         
             //due to substratcion of CLOCK_RUNTIME can all be sligtly negative 

@@ -7,7 +7,7 @@
 #define nodisc [[nodiscard]]
 #define cast(...) (__VA_ARGS__)
 
-namespace micro_bench
+namespace microbench
 {
     //sorry c++ chrono but I really dont want to iteract with all those templates
 
@@ -27,23 +27,30 @@ namespace micro_bench
         return clock() - from;
     }
 
-    int64_t calculate_median_clock_accuarcy() noexcept
+    struct Clock_Stats
     {
-        enum Runs
-        {
-            runs = 1000
-        };
-        int64_t times[runs] = {0};
+        int64_t median = 0;
+        int64_t average = 0;
+        int64_t min = 0; //usually 0
+        int64_t max = 0; //usually equal to median
+    };
+
+    Clock_Stats calculate_clock_stats() noexcept
+    {
+        enum Runs { runs = 1000 };
 
         //gather samples
+        int64_t times[runs] = {0};
+        int64_t sum = 0;
         for(int64_t i = 0; i < runs; i++)
         {
             int64_t from = clock();
             int64_t to = clock();
             times[i] = to - from;
+            sum += to - from;
         }
         
-        //bubble sort
+        //bubble sort (this function gets called only once - the efficiency *really* doesnt matter)
         for (int64_t i = 0; i < runs - 1; i++)
         {
             for (int64_t j = 0; j < runs - i - 1; j++)
@@ -55,26 +62,24 @@ namespace micro_bench
                 }
         }
 
-        int64_t median = 0;
-        if(runs % 2 == 0)
-            median = (times[runs/2] + times[runs/2 + 1]) / 2;
-        else
-            median = times[runs/2];
+        //fill samples
+        Clock_Stats stats = {};
+        stats.min = times[0];
+        stats.max = times[runs - 1];
+        stats.average = sum / runs;
 
-        return median;
+        if(runs % 2 == 0)
+            stats.median = (times[runs/2] + times[runs/2 + 1]) / 2;
+        else
+            stats.median = times[runs/2];
+
+        return stats;
     }
 
     namespace time_consts
     {
-        static const     int64_t CLOCK_ACCURACY = calculate_median_clock_accuarcy();
-
-        //CLOCK_ACCURACY is measured by repeatedly calling clock() - clock()
-        // as such the resulting CLOCK_ACCURACY is somewhere between
-        // clock runtime and 2*clock runtime depending from which point in the clock
-        // function is where the 'clock' actually 'starts'. We assume the maximum runtime
-        // since it gives the best results on my pc when measuring noop but the 
-        // choice is arbitrary
-        static const     int64_t CLOCK_RUNTIME = CLOCK_ACCURACY / 2;
+        static const Clock_Stats CLOCK_STATS = calculate_clock_stats();
+        static const     int64_t CLOCK_ACCURACY = CLOCK_STATS.median;
 
         static constexpr int64_t SECOND_MILISECONDS  = 1'000;
         static constexpr int64_t SECOND_MIRCOSECONDS = 1'000'000;
@@ -127,7 +132,8 @@ namespace micro_bench
         stats.batch_count = 0;
         stats.time_sum = 0;
         stats.squared_time_sum = 0;
-        stats.min_batch_time = cast(int64_t) 1 << 63;
+        stats.min_batch_time = cast(int64_t) 1 << 62; 
+        //arbitrary very large number so that min will get ovrriden
         stats.max_batch_time = 0;
         stats.mean_time_estimate = 0;
 
@@ -144,28 +150,37 @@ namespace micro_bench
             int64_t total_time = now - start;
             from = now;
 
+            //Instead of tracking the times themselves we track
+            // their deltas from mean time estimate
+            //This significantly improves the stability of subsequent deviation
+            // computation and all other statistics can be obtained by simply adding
+            // back the estimate.
+            //Also helps prevent overflows but that didnt ever happen anyways so it 
+            // largely doesnt matter
             int64_t delta = batch_time - stats.mean_time_estimate;
             stats.time_sum         += delta;
             stats.squared_time_sum += delta * delta;
             stats.batch_count      += 1;
             
-            if(stats.min_batch_time > batch_time)
-               stats.min_batch_time = batch_time;
+            if(stats.min_batch_time > delta)
+               stats.min_batch_time = delta;
                
-            if(stats.max_batch_time < batch_time)
-               stats.max_batch_time = batch_time;
+            if(stats.max_batch_time < delta)
+               stats.max_batch_time = delta;
 
             if(total_time > to_time)
             {
                 //if is over break
                 if(total_time > max_time_ns)
                     break;
-                    
-                int64_t iters = stats.batch_count * stats.batch_size;
-                stats.mean_time_estimate = stats.time_sum / iters;
 
                 //else compute the batch size so that we will finish on time
                 // while checking at least min_end_checks times if we are finished
+                
+                //update the estimate using the acquired data
+                int64_t iters = stats.batch_count * stats.batch_size;
+                stats.mean_time_estimate = stats.time_sum / iters;
+
                 int64_t remaining = max_time_ns - total_time;
                 int64_t num_checks = remaining / batch_time_ns;
                 if(num_checks < min_end_checks)
@@ -181,7 +196,7 @@ namespace micro_bench
                 stats.batch_count = 0; 
                 stats.time_sum = 0;
                 stats.squared_time_sum = 0;
-                stats.min_batch_time = cast(int64_t) 1 << 63;
+                stats.min_batch_time = cast(int64_t) 1 << 62;
                 stats.max_batch_time = 0;
                 to_time = max_time_ns;
             }
@@ -201,18 +216,24 @@ namespace micro_bench
         // usually 1 but can be more for very small functions
         // all other stats in this struct are properly statistically
         // corrected for this behaviour
-        int64_t batch_runs = 0;
+        int64_t batch_size = 0;
+        //the number of times the measured function was run in total
+        int64_t iters = 0; 
     };
 
+    //converts the raw measured stats to meaningful statistics
     Bench_Result process_stats(Bench_Stats const& stats, int64_t tested_function_calls_per_run = 1)
     {
+        using namespace time_consts;
+
+        assert(stats.min_batch_time * stats.batch_count <= stats.time_sum && "min must be smaller than sum");
+        assert(stats.max_batch_time * stats.batch_count >= stats.time_sum && "max must be bigger than sum");
+        
         //tested_function_calls_per_run is in case we 'batch' our tested function: 
         // ie instead of running the tested function once we run it 100 times
         // this just means that the batch_size is multiplied tested_function_calls_per_run times
-        using namespace time_consts;
-
-        int64_t batch_runs = stats.batch_size * tested_function_calls_per_run;
-        int64_t iters = batch_runs * (stats.batch_count);
+        int64_t batch_size = stats.batch_size * tested_function_calls_per_run;
+        int64_t iters = batch_size * (stats.batch_count);
         
         double batch_deviation_ms = 0;
         if(stats.batch_count > 1)
@@ -222,32 +243,59 @@ namespace micro_bench
             double sum2 = cast(double) stats.squared_time_sum;
             
             //Welford's algorithm for calculating varience
-            double varience = (sum2 - (sum * sum) / n) / (n - 1.0);
+            double varience_ns = (sum2 - (sum * sum) / n) / (n - 1.0);
 
             //deviation = sqrt(varience) and deviation is unit dependent just like mean is
-            batch_deviation_ms = sqrt(abs(varience)) / cast(double) MILISECOND_NANOSECONDS;
+            batch_deviation_ms = sqrt(abs(varience_ns)) / cast(double) MILISECOND_NANOSECONDS;
         }
 
         double mean_ms = 0.0;
         double min_ms = 0.0;
         double max_ms = 0.0;
+        
+        //CLOCK_ACCURACY is measured by repeatedly calling clock() - clock()
+        // as such the resulting CLOCK_ACCURACY is somewhere between
+        // clock runtime and 2*clock runtime depending from which point in the clock
+        // function is where the 'clock' actually 'starts'. We assume the maximum runtime
+        // but the choice is arbitrary
+        int64_t CLOCK_RUNTIME = CLOCK_ACCURACY / 2;
 
-        int64_t adjusted_time_sum = stats.time_sum + (stats.mean_time_estimate - CLOCK_RUNTIME) * stats.batch_count;
-        int64_t adjutsted_min = stats.min_batch_time + stats.mean_time_estimate - CLOCK_RUNTIME;
-        int64_t adjutsted_max = stats.max_batch_time + stats.mean_time_estimate - CLOCK_RUNTIME;
-        if(iters != 0)
+        //However since we substract it from min, max and mean the statics still remain valid
+        // only shifted (more or less corrected)
+        while(true)
         {
-            mean_ms = cast(double) adjusted_time_sum / cast(double) (iters * MILISECOND_NANOSECONDS);
-            min_ms = cast(double) adjutsted_min / cast(double) MILISECOND_NANOSECONDS;
-            max_ms = cast(double) adjutsted_max / cast(double) MILISECOND_NANOSECONDS;
+            int64_t adjusted_time_sum = stats.time_sum + (stats.mean_time_estimate - CLOCK_RUNTIME) * stats.batch_count;
+            int64_t adjutsted_min = stats.min_batch_time + stats.mean_time_estimate - CLOCK_RUNTIME;
+            int64_t adjutsted_max = stats.max_batch_time + stats.mean_time_estimate - CLOCK_RUNTIME;
+            
+            //when min is lower than clock accuracy its value is
+            // basically arbitrary. Even more so when it is under half (or even less)
+            // of the runtime so we just say its zero
+            if(stats.min_batch_time + stats.mean_time_estimate < CLOCK_RUNTIME)
+                adjutsted_min = 0;
+
+            assert(adjutsted_min * stats.batch_count <= adjusted_time_sum);
+            assert(adjutsted_max * stats.batch_count >= adjusted_time_sum);
+            if(iters != 0)
+            {
+                mean_ms = cast(double) adjusted_time_sum / cast(double) (iters * MILISECOND_NANOSECONDS);
+                min_ms = cast(double) adjutsted_min / cast(double) (batch_size * MILISECOND_NANOSECONDS);
+                max_ms = cast(double) adjutsted_max / cast(double) (batch_size * MILISECOND_NANOSECONDS);
+                printf("%lf\n", min_ms);
+            }
+        
+            //due to substratcion of CLOCK_RUNTIME can all be sligtly negative 
+            // this happens very rarely and almost exclusively for for noop measuring
+            // (since then stats.min_batch_time + stats.mean_time_estimate often equals 0)
+            // In case any discrapencies happens we keep halfing CLOCK_RUNTIME by two until 
+            //   we get plausible result (we eventually reach 0 for which it will be correct)
+            if(mean_ms < 0 || min_ms < 0 || max_ms < 0 || mean_ms < min_ms)
+                CLOCK_RUNTIME /= 2;
+            else
+                break;
         }
 
-        //due to measure bias can all be sligtly negative for noop measuring
-        // this happens very rarely and does not affect any other function
-        // still we correct to positive
-        mean_ms = abs(mean_ms);
-        min_ms = abs(min_ms);
-        max_ms = abs(max_ms);
+        assert(mean_ms > 0 && min_ms > 0 && max_ms > 0);
 
         //We assume that summing all running times in a batch 
         // (and then dividing by its size = making an average)
@@ -263,22 +311,39 @@ namespace micro_bench
         // deviation_element = deviation_sampling * sqrt(samples) / samples
         //                   = deviation_sampling / sqrt(samples)
 
-        double sqrt_samples = sqrt(cast(double) batch_runs);
+        double sqrt_batch_size = sqrt(cast(double) batch_size);
 
         Bench_Result result;
-        result.deviation_ms = batch_deviation_ms / sqrt_samples;
+        result.deviation_ms = batch_deviation_ms / sqrt_batch_size;
 
         //since min and max are also somewhere within the confidence interval
-        // keeping the same confidence in them requires us to also apply this correction
-        result.min_ms = min_ms / sqrt_samples; 
-        result.max_ms = max_ms / sqrt_samples; 
+        // keeping the same confidence in them requires us to also apply the same correction
+        // to the distance from the mean (this time * sqrt_batch_size because we already 
+        // divided by batch_size when calculating min_ms)
+        result.min_ms = mean_ms + (min_ms - mean_ms) * sqrt_batch_size; 
+        result.max_ms = mean_ms + (max_ms - mean_ms) * sqrt_batch_size; 
+
+        //this correction can again push min to be negative 
+        // (also again mostly with noop)
+        if(result.min_ms < 0)
+            result.min_ms = 0;
+            
         result.mean_ms = mean_ms; 
-        result.batch_runs = batch_runs;
+        result.batch_size = batch_size;
+        result.iters = iters;
+
+        //results must be plausible
+        assert(result.iters >= 0);
+        assert(result.batch_size >= 0);
+        assert(result.min_ms >= 0);
+        assert(result.max_ms >= 0);
+        assert(result.mean_ms >= 0);
+        assert(result.deviation_ms >= 0);
+        assert(result.min_ms <= result.mean_ms && result.mean_ms <= result.max_ms);
 
         return result;
     }
 
-    //benchmarks the given function
     template <typename Fn> nodisc 
     Bench_Result benchmark(int64_t max_time_ms, int64_t warm_up_ms, Fn tested_function, int64_t tested_function_calls_per_run = 1, int64_t batch_of_clock_accuarcy_multiple = 5) noexcept
     {
@@ -290,7 +355,6 @@ namespace micro_bench
         return process_stats(stats, tested_function_calls_per_run);
     }
     
-    //benchmarks the given function
     template <typename Fn> nodisc 
     Bench_Result benchmark(int64_t max_time_ms, Fn tested_function, int64_t tested_function_calls_per_run = 1) noexcept
     {

@@ -1,5 +1,5 @@
 # micro-bench
-small and fast statistical micro benchmark
+small statistical micro benchmark
 
 ## Why
 Most benchmark libraries are either full of smudge constanst and ad hoc reasoning or are extremely detailed and unwieldy. The goal of this benchmark is to be as simple as possible while staying properly based in statistics.

@@ -33,6 +33,7 @@ namespace microbench
         int64_t average = 0;
         int64_t min = 0; //usually 0
         int64_t max = 0; //usually equal to median
+        int64_t accuracy = 0;
     };
 
     Clock_Stats calculate_clock_stats() noexcept
@@ -73,13 +74,22 @@ namespace microbench
         else
             stats.median = times[runs/2];
 
+        //not very objective but good enough
+        stats.accuracy = stats.average;
+        if(stats.median < stats.average && stats.median != 0)
+            stats.accuracy = stats.median;
+        
+        //realisticaly shouldnt happen but just in case
+        if(stats.accuracy == 0) 
+            stats.accuracy = 1;
+
         return stats;
     }
 
     namespace time_consts
     {
         static const Clock_Stats CLOCK_STATS = calculate_clock_stats();
-        static const     int64_t CLOCK_ACCURACY = CLOCK_STATS.median != 0 ? CLOCK_STATS.median : CLOCK_STATS.average;
+        static const     int64_t CLOCK_ACCURACY = CLOCK_STATS.accuracy;
 
         static constexpr int64_t SECOND_MILISECONDS  = 1'000;
         static constexpr int64_t SECOND_MIRCOSECONDS = 1'000'000;
@@ -117,12 +127,13 @@ namespace microbench
         int64_t min_batch_size = 1, 
         int64_t min_end_checks = 5) noexcept
     {
-        assert(batch_time_ns > 0);
         assert(min_end_checks > 0);
         assert(min_batch_size > 0);
         assert(max_time_ns >= 0);
-        assert(warm_up_ns >= 0);
         
+        if(batch_time_ns <= 0)
+            batch_time_ns = 1;
+
         int64_t to_time = warm_up_ns;
         if(to_time > max_time_ns || to_time <= 0)
             to_time = max_time_ns;
@@ -133,7 +144,7 @@ namespace microbench
         stats.time_sum = 0;
         stats.squared_time_sum = 0;
         stats.min_batch_time = cast(int64_t) 1 << 62; 
-        //arbitrary very large number so that min will get ovrriden
+        //arbitrary very large number so that min will get overriden
         stats.max_batch_time = 0;
         stats.mean_time_estimate = 0;
 
@@ -188,7 +199,11 @@ namespace microbench
 
                 //total_expected_iters = (iters / total_time) * remaining
                 //batch_size = total_expected_iters / num_checks
-                stats.batch_size = (iters * remaining) / (total_time * num_checks);
+                int64_t den = total_time * num_checks;
+                if(den <= 0) //prevent division by 0 or weird results
+                    den = 1;
+
+                stats.batch_size = (iters * remaining) / den;
                 if(stats.batch_size < min_batch_size)
                     stats.batch_size = min_batch_size;
 
@@ -252,46 +267,18 @@ namespace microbench
         double mean_ms = 0.0;
         double min_ms = 0.0;
         double max_ms = 0.0;
-        
-        //CLOCK_ACCURACY is measured by repeatedly calling clock() - clock()
-        // as such the resulting CLOCK_ACCURACY is somewhere between
-        // clock runtime and 2*clock runtime depending from which point in the clock
-        // function is where the 'clock' actually 'starts'. We assume the maximum runtime
-        // but the choice is arbitrary
-        int64_t CLOCK_RUNTIME = CLOCK_ACCURACY;
 
-        //However since we substract it from min, max and mean the statics still remain valid
-        // only shifted (more or less corrected)
-        while(true)
+        int64_t adjusted_time_sum = stats.time_sum + stats.mean_time_estimate * stats.batch_count;
+        int64_t adjutsted_min = stats.min_batch_time + stats.mean_time_estimate;
+        int64_t adjutsted_max = stats.max_batch_time + stats.mean_time_estimate;
+
+        assert(adjutsted_min * stats.batch_count <= adjusted_time_sum);
+        assert(adjutsted_max * stats.batch_count >= adjusted_time_sum);
+        if(iters != 0)
         {
-            int64_t adjusted_time_sum = stats.time_sum + (stats.mean_time_estimate - CLOCK_RUNTIME) * stats.batch_count;
-            int64_t adjutsted_min = stats.min_batch_time + stats.mean_time_estimate - CLOCK_RUNTIME;
-            int64_t adjutsted_max = stats.max_batch_time + stats.mean_time_estimate - CLOCK_RUNTIME;
-            
-            //when min is lower than clock accuracy its value is
-            // basically arbitrary. Even more so when it is under half (or even less)
-            // of the runtime so we just say its zero
-            if(stats.min_batch_time + stats.mean_time_estimate < CLOCK_RUNTIME)
-                adjutsted_min = 0;
-
-            assert(adjutsted_min * stats.batch_count <= adjusted_time_sum);
-            assert(adjutsted_max * stats.batch_count >= adjusted_time_sum);
-            if(iters != 0)
-            {
-                mean_ms = cast(double) adjusted_time_sum / cast(double) (iters * MILISECOND_NANOSECONDS);
-                min_ms = cast(double) adjutsted_min / cast(double) (batch_size * MILISECOND_NANOSECONDS);
-                max_ms = cast(double) adjutsted_max / cast(double) (batch_size * MILISECOND_NANOSECONDS);
-            }
-        
-            //due to substratcion of CLOCK_RUNTIME can all be sligtly negative 
-            // this happens very rarely and almost exclusively for for noop measuring
-            // (since then stats.min_batch_time + stats.mean_time_estimate often equals 0)
-            // In case any discrapencies happens we keep halfing CLOCK_RUNTIME by two until 
-            //   we get plausible result (we eventually reach 0 for which it will be correct)
-            if(mean_ms < 0 || min_ms < 0 || max_ms < 0 || mean_ms < min_ms)
-                CLOCK_RUNTIME /= 2;
-            else
-                break;
+            mean_ms = cast(double) adjusted_time_sum / cast(double) (iters * MILISECOND_NANOSECONDS);
+            min_ms = cast(double) adjutsted_min / cast(double) (batch_size * MILISECOND_NANOSECONDS);
+            max_ms = cast(double) adjutsted_max / cast(double) (batch_size * MILISECOND_NANOSECONDS);
         }
 
         assert(mean_ms >= 0 && min_ms >= 0 && max_ms >= 0);
@@ -311,6 +298,8 @@ namespace microbench
         //                   = deviation_sampling / sqrt(samples)
 
         double sqrt_batch_size = sqrt(cast(double) batch_size);
+        if(batch_size == 0) //no division by 0
+            sqrt_batch_size = 1.0;
 
         Bench_Result result;
         result.deviation_ms = batch_deviation_ms / sqrt_batch_size;
@@ -322,22 +311,22 @@ namespace microbench
         result.min_ms = mean_ms + (min_ms - mean_ms) * sqrt_batch_size; 
         result.max_ms = mean_ms + (max_ms - mean_ms) * sqrt_batch_size; 
 
-        //this correction can again push min to be negative 
-        // (also again mostly with noop)
-        if(result.min_ms < 0)
-            result.min_ms = 0;
+        //the above correction can push min to be negative 
+        // happens mostly with noop and generally is not a problem
+        if(result.min_ms < 0.0)
+            result.min_ms = 0.0;
             
         result.mean_ms = mean_ms; 
         result.batch_size = batch_size;
         result.iters = iters;
 
         //results must be plausible
-        assert(result.iters >= 0);
-        assert(result.batch_size >= 0);
-        assert(result.min_ms >= 0);
-        assert(result.max_ms >= 0);
-        assert(result.mean_ms >= 0);
-        assert(result.deviation_ms >= 0);
+        assert(result.iters >= 0.0);
+        assert(result.batch_size >= 0.0);
+        assert(result.min_ms >= 0.0);
+        assert(result.max_ms >= 0.0);
+        assert(result.mean_ms >= 0.0);
+        assert(result.deviation_ms >= 0.0);
         assert(result.min_ms <= result.mean_ms && result.mean_ms <= result.max_ms);
 
         return result;
@@ -355,9 +344,9 @@ namespace microbench
     }
     
     template <typename Fn> nodisc 
-    Bench_Result benchmark(int64_t max_time_ms, Fn tested_function, int64_t tested_function_calls_per_run = 1) noexcept
+    Bench_Result benchmark(int64_t max_time_ms, Fn tested_function, int64_t tested_function_calls_per_run = 1, int64_t batch_of_clock_accuarcy_multiple = 5) noexcept
     {
-        return benchmark(max_time_ms, max_time_ms / 20 + 1, tested_function, tested_function_calls_per_run);
+        return benchmark(max_time_ms, max_time_ms / 20 + 1, tested_function, tested_function_calls_per_run, batch_of_clock_accuarcy_multiple);
     }
 
     void use_pointer(char const volatile*) {}

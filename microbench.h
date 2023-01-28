@@ -321,8 +321,8 @@ namespace microbench
         result.iters = iters;
 
         //results must be plausible
-        assert(result.iters >= 0.0);
-        assert(result.batch_size >= 0.0);
+        assert(result.iters >= 0);
+        assert(result.batch_size >= 0);
         assert(result.min_ms >= 0.0);
         assert(result.max_ms >= 0.0);
         assert(result.mean_ms >= 0.0);

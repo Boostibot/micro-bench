@@ -16,19 +16,6 @@
 
 namespace microbench
 {
-    static int64_t clock_ns() noexcept {
-        auto duration = std::chrono::high_resolution_clock::now().time_since_epoch();
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count(); 
-    }
-
-    template <typename Fn> 
-    static int64_t ellapsed_time_ns(Fn fn) noexcept
-    {
-        int64_t from = clock_ns();
-        fn();
-        return clock_ns() - from;
-    }
-    
     struct Bench_Result
     {
         double mean_ms = 0.0;
@@ -59,19 +46,20 @@ namespace microbench
     FORCE_INLINE 
     static void read_write_barrier();
 
+    //Clock with ns accuracy
+    static int64_t clock_ns() noexcept;
+
+    //returns the running time of the given function in ns
+    template <typename Fn> 
+    static int64_t ellapsed_time_ns(Fn fn) noexcept;
+    
     namespace time_consts
     {
         static constexpr int64_t SECOND_MILISECONDS  = 1'000;
         static constexpr int64_t SECOND_MIRCOSECONDS = 1'000'000;
         static constexpr int64_t SECOND_NANOSECONDS  = 1'000'000'000;
         static constexpr int64_t SECOND_PICOSECONDS  = 1'000'000'000'000;
-
         static constexpr int64_t MILISECOND_NANOSECONDS = SECOND_NANOSECONDS / SECOND_MILISECONDS;
-
-        static constexpr int64_t MINUTE_SECONDS = 60;
-        static constexpr int64_t HOUR_SECONDS = 60 * MINUTE_SECONDS;
-        static constexpr int64_t DAY_SECONDS = 24 * HOUR_SECONDS;
-        static constexpr int64_t WEEK_SECONDS = 7 * DAY_SECONDS;
     }
 }
 
@@ -354,6 +342,19 @@ namespace microbench
     Bench_Result benchmark(int64_t max_time_ms, Fn measured_fn, int64_t runs_mult, int64_t batch_of_clock_accuarcy_multiple) noexcept
     {
         return benchmark(max_time_ms, max_time_ms / 20 + 1, measured_fn, runs_mult, batch_of_clock_accuarcy_multiple);
+    }
+    
+    static int64_t clock_ns() noexcept {
+        auto duration = std::chrono::high_resolution_clock::now().time_since_epoch();
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count(); 
+    }
+
+    template <typename Fn> 
+    static int64_t ellapsed_time_ns(Fn fn) noexcept
+    {
+        int64_t from = clock_ns();
+        fn();
+        return clock_ns() - from;
     }
     
     //modified version of DoNotOptimize and ClobberMemmory from google test

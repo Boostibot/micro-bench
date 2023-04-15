@@ -205,7 +205,7 @@ namespace microbench
         //converts the raw measured stats to meaningful statistics
         static Bench_Result process_stats(Bench_Stats stats, int64_t runs_mult)
         {
-            using namespace jot::time_consts;
+            using namespace microbench::time_consts;
 
             assert(stats.min_batch_time * stats.batch_count <= stats.time_sum && "min must be smaller than sum");
             assert(stats.max_batch_time * stats.batch_count >= stats.time_sum && "max must be bigger than sum");

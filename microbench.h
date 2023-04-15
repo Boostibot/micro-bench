@@ -24,7 +24,7 @@ namespace microbench
     template <typename Fn> 
     static int64_t ellapsed_time_ns(Fn fn) noexcept
     {
-        double from = clock_ns();
+        int64_t from = clock_ns();
         fn();
         return clock_ns() - from;
     }

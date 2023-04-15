@@ -36,15 +36,14 @@ namespace microbench
     template <class Fn> static Bench_Result benchmark(int64_t max_time_ms, Fn measured_fn, int64_t runs_mult = 1, int64_t batch_of_clock_accuarcy_multiple = 5) noexcept;
     
     //Marks a pointer as used for the compiler
-    static void use_pointer(char const volatile*) {}
+    FORCE_INLINE static void use_pointer(char const volatile*) {}
     
     //Prevents the compiler from optimizing away the variable passed in
-    template <typename T> FORCE_INLINE 
-    static void do_no_optimize(T const& value);
+    template <typename T> 
+    FORCE_INLINE static void do_no_optimize(T const& value);
 
     //Prevents the compiler from reordering read write instructions
-    FORCE_INLINE 
-    static void read_write_barrier();
+    FORCE_INLINE static void read_write_barrier();
 
     //Clock with ns accuracy
     static int64_t clock_ns() noexcept;
